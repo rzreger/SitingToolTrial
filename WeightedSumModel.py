@@ -56,7 +56,8 @@ if uploaded_files:
         st.header("Suitability Scores")
 
         # Combine rasters using weighted sum
-        combined_array = np.zeros_like(next(iter(raster_data.values())))
+        # combined_array = np.zeros_like(next(iter(raster_data.values())))
+        combined_array = np.zeros_like(next(iter(raster_data.values())), dtype=np.float32)
         for layer_name, data in raster_data.items():
             combined_array += weights[layer_name] * data
 
