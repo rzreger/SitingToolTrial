@@ -1,5 +1,5 @@
 streamlit
 rasterio
 numpy
-matplotlib.pyplot
+matplotlib
 gc
