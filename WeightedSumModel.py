@@ -1,6 +1,8 @@
 import streamlit as st
 import rasterio
 import numpy as np
+import gc  # Garbage collection
+import matplotlib.pyplot as plt
 
 # Title and Introduction
 st.title("Site Suitability Tool")
@@ -14,29 +16,26 @@ uploaded_files = st.file_uploader(
     "Upload processed raster layers (GeoTIFF files)", type=["tif", "tiff"], accept_multiple_files=True
 )
 
+raster_data = {}  # Dictionary to store loaded raster data
+
 if uploaded_files:
     st.success(f"Uploaded {len(uploaded_files)} files.")
 
-    # Load rasters into a dictionary
-    raster_data = {}
     for file in uploaded_files:
         try:
-            # Use file as an in-memory file-like object for rasterio
+            # Load raster file in memory-efficient way
             with rasterio.MemoryFile(file.read()) as memfile:
                 with memfile.open() as src:
-                    data = src.read(1)  # Read the first band
+                    data = src.read(1, out_dtype=np.float32)  # Read as float32 to save memory
                     raster_data[file.name] = data
-                    st.write(f"Loaded: {file.name}")
-                    st.write(f"  Dimensions: {data.shape}")
-                    st.write(f"  CRS: {src.crs}")
-                    st.write(f"  Bounds: {src.bounds}")
+                    st.write(f"Loaded: {file.name} | Shape: {data.shape} | CRS: {src.crs}")
         except Exception as e:
             st.error(f"Error loading {file.name}: {e}")
 else:
     st.warning("Please upload at least one GeoTIFF file to proceed.")
 
 # Step 2: Define Weights and Calculate Scores
-if uploaded_files:
+if raster_data:
     st.header("Step 2: Define Weights")
 
     # Prompt user for weights
@@ -55,17 +54,16 @@ if uploaded_files:
     if st.button("Calculate Suitability Scores") and np.isclose(sum(weights.values()), 1.0):
         st.header("Suitability Scores")
 
-        # Combine rasters using weighted sum
-        # combined_array = np.zeros_like(next(iter(raster_data.values())))
-        combined_array = np.zeros_like(next(iter(raster_data.values())), dtype=np.float32)
+        # Combine rasters using weighted sum in a memory-efficient way
+        shape = next(iter(raster_data.values())).shape  # Get shape from first raster
+        combined_array = np.zeros(shape, dtype=np.float32)
+
         for layer_name, data in raster_data.items():
             combined_array += weights[layer_name] * data
 
         st.success("Suitability scores calculated successfully!")
 
         # Display suitability scores as a heatmap
-        import matplotlib.pyplot as plt
-
         plt.figure(figsize=(10, 8))
         plt.imshow(combined_array, cmap='viridis', interpolation='nearest')
         plt.colorbar(label='Suitability Score')
@@ -74,16 +72,25 @@ if uploaded_files:
         plt.ylabel("Y Coordinate")
         st.pyplot(plt)
 
+        # Perform garbage collection to free memory
+        del raster_data  # Delete dictionary holding raster arrays
+        gc.collect()
+
         # Save the suitability scores as a GeoTIFF
         st.header("Download Suitability Scores")
         output_filename = st.text_input("Output filename (e.g., suitability.tif):", "suitability.tif")
         if st.button("Download GeoTIFF"):
-            with rasterio.open(
-                uploaded_files[0]  # Use the first uploaded file as a reference
-            ) as ref:
-                meta = ref.meta.copy()
-                meta.update(dtype=rasterio.float32, count=1)
+            try:
+                with rasterio.open(uploaded_files[0]) as ref:
+                    meta = ref.meta.copy()
+                    meta.update(dtype=rasterio.float32, count=1)
 
-                with rasterio.open(output_filename, "w", **meta) as dst:
-                    dst.write(combined_array.astype(rasterio.float32), 1)
-                st.success(f"GeoTIFF saved as {output_filename}.")
+                    with rasterio.open(output_filename, "w", **meta) as dst:
+                        dst.write(combined_array.astype(rasterio.float32), 1)
+                    st.success(f"GeoTIFF saved as {output_filename}.")
+            except Exception as e:
+                st.error(f"Error saving GeoTIFF: {e}")
+
+        # Clean up memory
+        del combined_array
+        gc.collect()
